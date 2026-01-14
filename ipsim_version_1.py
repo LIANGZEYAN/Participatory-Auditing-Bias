@@ -168,14 +168,18 @@ def add_semantic_similarity_colbert_top(
 
 def compute_unbiased_score(
     df,
-    alpha=1.0,
+    alpha_coef=1.0,
     qid_col="qid",
     score_col="score",
+    rank_col="rank",
     sim_col="semantic_sim"
 ):
     """
-    Compute unbiased score by combining normalized ColBERT score and semantic similarity.
-    Formula: unbiased_score = normalized_score / alpha + semantic_sim
+    Compute unbiased score using semantic similarity adjustment.
+    
+    Formula: unbiased_score = normalized_score · (1 + alpha_coef × semantic_sim)
+    
+    This is the SBR (Semantic-Based Reranking) approach without click data.
     """
     df = df.copy()
     
@@ -190,8 +194,8 @@ def compute_unbiased_score(
     # Normalize ColBERT scores within each qid
     df["normalized_score"] = df.groupby(qid_col)[score_col].transform(min_max_norm)
     
-    # Compute unbiased score
-    df["unbiased_score"] = (df["normalized_score"] / alpha) + df[sim_col]
+    # Compute unbiased score with semantic similarity adjustment
+    df["unbiased_score"] = df["normalized_score"] * (1 + alpha_coef * df[sim_col])
     
     # Generate new ranking based on unbiased score
     df["unbiased_rank"] = (
@@ -207,7 +211,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="IPS-based debiasing for ColBERT rankings with semantic similarity adjustment"
+        description="Semantic-based reranking for ColBERT rankings without click data"
     )
     parser.add_argument(
         "input_file",
@@ -223,11 +227,11 @@ def main():
         help="Number of top documents to use for semantic similarity calculation. Default: 5"
     )
     parser.add_argument(
-        "alpha",
+        "alpha_coef",
         nargs="?",
         type=float,
         default=1.0,
-        help="Alpha parameter for debiasing (controls debiasing strength). Default: 1.0"
+        help="Alpha coefficient for semantic similarity weight. Default: 1.0"
     )
     parser.add_argument(
         "--output",
@@ -239,7 +243,7 @@ def main():
     args = parser.parse_args()
     
     print(f"Loading ColBERT rankings from: {args.input_file}")
-    print(f"Parameters - Top-K: {args.top_k}, Alpha: {args.alpha}")
+    print(f"Parameters - Top-K: {args.top_k}, Alpha: {args.alpha_coef}")
     
     # Load ColBERT ranking results
     # Expected columns: qid, docno, score, text
@@ -270,16 +274,16 @@ def main():
     )
     
     # Step 4: Compute unbiased score and re-rank
-    print(f"\nStep 4: Computing unbiased scores with alpha={args.alpha}...")
-    df_result = compute_unbiased_score(df_with_sim, alpha=args.alpha)
+    print(f"\nStep 4: Computing unbiased scores with alpha={args.alpha_coef}...")
+    df_result = compute_unbiased_score(df_with_sim, alpha_coef=args.alpha_coef)
     
     # Step 5: Sort by qid and unbiased_score
     df_sorted = df_result.sort_values(by=["qid", "unbiased_score"], ascending=[True, False])
     
     # Step 6: Save results
     print(f"\nSaving debiased rankings to: {args.output}")
-    output_cols = ["qid", "docno", "score", "normalized_score", "semantic_sim", 
-                   "unbiased_score", "unbiased_rank", "text"]
+    output_cols = ["qid", "docno", "score", "normalized_score", 
+                   "semantic_sim", "unbiased_score", "unbiased_rank", "text"]
     df_sorted[output_cols].to_csv(args.output, index=False)
     
     print("\n=== Processing Complete ===")
