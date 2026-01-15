@@ -194,12 +194,12 @@ def compute_unbiased_score(
     # Normalize ColBERT scores within each qid
     df["normalized_score"] = df.groupby(qid_col)[score_col].transform(min_max_norm)
     
-    # Compute unbiased score with semantic similarity adjustment
-    df["unbiased_score"] = df["normalized_score"] * (1 + alpha_coef * df[sim_col])
+    # Compute SBR score with semantic similarity adjustment
+    df["sbr_score"] = df["normalized_score"] * (1 + alpha_coef * df[sim_col])
     
-    # Generate new ranking based on unbiased score
-    df["unbiased_rank"] = (
-        df.groupby(qid_col)["unbiased_score"]
+    # Generate new ranking based on SBR score
+    df["sbr_rank"] = (
+        df.groupby(qid_col)["sbr_score"]
           .rank(method="first", ascending=False)
           .astype(int)
     )
@@ -273,17 +273,17 @@ def main():
         batch_size=32
     )
     
-    # Step 4: Compute unbiased score and re-rank
-    print(f"\nStep 4: Computing unbiased scores with alpha={args.alpha_coef}...")
+    # Step 4: Compute SBR score and re-rank
+    print(f"\nStep 4: Computing SBR scores with alpha={args.alpha_coef}...")
     df_result = compute_unbiased_score(df_with_sim, alpha_coef=args.alpha_coef)
     
-    # Step 5: Sort by qid and unbiased_score
-    df_sorted = df_result.sort_values(by=["qid", "unbiased_score"], ascending=[True, False])
+    # Step 5: Sort by qid and SBR score
+    df_sorted = df_result.sort_values(by=["qid", "sbr_score"], ascending=[True, False])
     
     # Step 6: Save results
-    print(f"\nSaving debiased rankings to: {args.output}")
+    print(f"\nSaving SBR rankings to: {args.output}")
     output_cols = ["qid", "docno", "score", "normalized_score", 
-                   "semantic_sim", "unbiased_score", "unbiased_rank", "text"]
+                   "semantic_sim", "sbr_score", "sbr_rank", "text"]
     df_sorted[output_cols].to_csv(args.output, index=False)
     
     print("\n=== Processing Complete ===")
