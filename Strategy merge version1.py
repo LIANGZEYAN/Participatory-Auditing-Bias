@@ -6,90 +6,90 @@ from transformers import AutoTokenizer, AutoModel
 from scipy.spatial.distance import cosine
 
 
-def strategic_document_selection(biased_ranking_df, debiased_ranking_df, qid, qrels_df=None, top_k=4, 
+def strategic_document_selection(colbert_ranking_df, sbr_ranking_df, qid, qrels_df=None, top_k=4, 
                                 model_name="princeton-nlp/sup-simcse-bert-base-uncased"):
     """
     Strategic document selection: picks top documents from both rankings and adds a dissimilar negative example.
     
     Selection strategy:
-    1. Select top-k documents from biased ranking
-    2. Select top-k documents from debiased ranking (excluding duplicates)
+    1. Select top-k documents from ColBERT ranking
+    2. Select top-k documents from SBR ranking (excluding duplicates)
     3. Select 1 easy negative document (lowest semantic similarity, label=0)
     
     Total: 2*top_k + 1 documents (default: 4 + 4 + 1 = 9 documents)
     """
     # Filter data for the specified qid
-    biased_df = biased_ranking_df[biased_ranking_df['qid'] == qid].copy()
-    debiased_df = debiased_ranking_df[debiased_ranking_df['qid'] == qid].copy()
+    colbert_df = colbert_ranking_df[colbert_ranking_df['qid'] == qid].copy()
+    sbr_df = sbr_ranking_df[sbr_ranking_df['qid'] == qid].copy()
     
-    if biased_df.empty or debiased_df.empty:
+    if colbert_df.empty or sbr_df.empty:
         raise ValueError(f"qid={qid} is missing in one/both rankings")
     
-    query_text = biased_df['query'].iloc[0]
+    query_text = colbert_df['query'].iloc[0]
     
     # Sort by respective rank columns
-    biased_sorted = biased_df.sort_values('biased_rank').reset_index(drop=True)
-    debiased_sorted = debiased_df.sort_values('unbiased_rank').reset_index(drop=True)
+    colbert_sorted = colbert_df.sort_values('colbert_rank').reset_index(drop=True)
+    sbr_sorted = sbr_df.sort_values('sbr_rank').reset_index(drop=True)
     
     selected_docs = []
     selected_docnos = set()
     
-    # Step 1: Select top-k documents from biased ranking
-    for i in range(min(top_k, len(biased_sorted))):
-        doc = biased_sorted.iloc[i]
+    # Step 1: Select top-k documents from ColBERT ranking
+    for i in range(min(top_k, len(colbert_sorted))):
+        doc = colbert_sorted.iloc[i]
         
-        # Find debiased rank if exists
-        debiased_rank = np.nan
-        matching_debiased = debiased_df[debiased_df['docno'] == doc['docno']]
-        if not matching_debiased.empty:
-            debiased_rank = matching_debiased.iloc[0]['unbiased_rank']
+        # Find SBR rank if exists
+        sbr_rank = np.nan
+        matching_sbr = sbr_df[sbr_df['docno'] == doc['docno']]
+        if not matching_sbr.empty:
+            sbr_rank = matching_sbr.iloc[0]['sbr_rank']
         
         selected_docs.append({
             'qid': qid,
             'query': query_text,
             'docno': doc['docno'],
             'text': doc['text'],
-            'biased_rank': doc['biased_rank'],
-            'debiased_rank': debiased_rank,
-            'source': "top from biased",
-            'from': "biased",
+            'colbert_rank': doc['colbert_rank'],
+            'sbr_rank': sbr_rank,
+            'source': "top from ColBERT",
+            'from': "ColBERT",
             'selected_in_turn': len(selected_docs) + 1
         })
         selected_docnos.add(doc['docno'])
     
-    # Step 2: Select top-k documents from debiased ranking (skip duplicates)
-    debiased_idx = 0
-    selected_from_debiased = 0
+    # Step 2: Select top-k documents from SBR ranking (skip duplicates)
+    sbr_idx = 0
+    selected_from_sbr = 0
     
-    while selected_from_debiased < top_k and debiased_idx < len(debiased_sorted):
-        doc = debiased_sorted.iloc[debiased_idx]
-        debiased_idx += 1
+    while selected_from_sbr < top_k and sbr_idx < len(sbr_sorted):
+        doc = sbr_sorted.iloc[sbr_idx]
+        sbr_idx += 1
         
         if doc['docno'] in selected_docnos:
             continue
         
-        # Find biased rank if exists
-        biased_rank = np.nan
-        matching_biased = biased_df[biased_df['docno'] == doc['docno']]
-        if not matching_biased.empty:
-            biased_rank = matching_biased.iloc[0]['biased_rank']
+        # Find ColBERT rank if exists
+        colbert_rank = np.nan
+        matching_colbert = colbert_df[colbert_df['docno'] == doc['docno']]
+        if not matching_colbert.empty:
+            colbert_rank = matching_colbert.iloc[0]['colbert_rank']
             
         selected_docs.append({
             'qid': qid,
             'query': query_text,
             'docno': doc['docno'],
             'text': doc['text'],
-            'biased_rank': biased_rank,
-            'debiased_rank': doc['unbiased_rank'],
-            'source': "top from debiased",
-            'from': "debiased",
+            'colbert_rank': colbert_rank,
+            'sbr_rank': doc['sbr_rank'],
+            'source': "top from SBR",
+            'from': "SBR",
             'selected_in_turn': len(selected_docs) + 1
         })
         selected_docnos.add(doc['docno'])
-        selected_from_debiased += 1
+        selected_from_sbr += 1
     
     # If no remaining documents, return what we have
-    remaining_docs = debiased_sorted[~debiased_sorted['docno'].isin(selected_docnos)].copy()
+    remaining_docs = sbr_sorted[~sbr_sorted['docno'].isin(selected_docnos)].copy()
     if remaining_docs.empty:
         return pd.DataFrame(selected_docs)
     
@@ -102,7 +102,7 @@ def strategic_document_selection(biased_ranking_df, debiased_ranking_df, qid, qr
             all_docs_df,
             qid_col="qid",
             text_col="text",
-            rank_col="debiased_rank" if "debiased_rank" in all_docs_df.columns else "unbiased_rank",
+            rank_col="sbr_rank" if "sbr_rank" in all_docs_df.columns else "sbr_rank",
             top_k=min(len(temp_df), 5),
             model_name=model_name,
             batch_size=32
@@ -135,22 +135,22 @@ def strategic_document_selection(biased_ranking_df, debiased_ranking_df, qid, qr
         neg_candidates_df = neg_candidates_df.sort_values('semantic_sim')
         neg_doc = neg_candidates_df.iloc[0]
         
-        # Find biased rank
-        biased_rank = np.nan
-        matching_biased = biased_df[biased_df['docno'] == neg_doc['docno']]
-        if not matching_biased.empty:
-            biased_rank = matching_biased.iloc[0]['biased_rank']
+        # Find ColBERT rank
+        colbert_rank = np.nan
+        matching_colbert = colbert_df[colbert_df['docno'] == neg_doc['docno']]
+        if not matching_colbert.empty:
+            colbert_rank = matching_colbert.iloc[0]['colbert_rank']
         
         selected_docs.append({
             'qid': qid,
             'query': query_text,
             'docno': neg_doc['docno'],
             'text': neg_doc['text'],
-            'biased_rank': biased_rank,
-            'debiased_rank': neg_doc['debiased_rank'] if 'debiased_rank' in neg_doc else neg_doc['unbiased_rank'],
+            'colbert_rank': colbert_rank,
+            'sbr_rank': neg_doc['sbr_rank'] if 'sbr_rank' in neg_doc else neg_doc['sbr_rank'],
             'semantic_sim': neg_doc['semantic_sim'],
             'source': "easy negative",
-            'from': "debiased",
+            'from': "SBR",
             'selected_in_turn': len(selected_docs) + 1,
             'label': neg_doc['label'] if 'label' in neg_doc else np.nan
         })
@@ -162,7 +162,7 @@ def add_semantic_similarity_hf(
     df,
     qid_col="qid",
     text_col="text",
-    rank_col="biased_rank",
+    rank_col="colbert_rank",
     top_k=5,
     model_name="princeton-nlp/sup-simcse-bert-base-uncased",
     batch_size=32
@@ -241,7 +241,7 @@ def add_semantic_similarity_hf(
     return df
 
 
-def process_all_queries(biased_ranking_df, debiased_ranking_df, qrels_df=None, top_k=4, 
+def process_all_queries(colbert_ranking_df, sbr_ranking_df, qrels_df=None, top_k=4, 
                        model_name="princeton-nlp/sup-simcse-bert-base-uncased"):
     """
     Process all query IDs using the strategic document selection approach.
@@ -249,16 +249,16 @@ def process_all_queries(biased_ranking_df, debiased_ranking_df, qrels_df=None, t
     Returns a DataFrame with selected documents for all queries.
     """
     # Validate data format
-    biased_required_columns = ['qid', 'query', 'docno', 'text', 'biased_rank']
-    debiased_required_columns = ['qid', 'query', 'docno', 'text', 'unbiased_rank']
+    colbert_required_columns = ['qid', 'query', 'docno', 'text', 'colbert_rank']
+    sbr_required_columns = ['qid', 'query', 'docno', 'text', 'sbr_rank']
     
-    missing_cols = [col for col in biased_required_columns if col not in biased_ranking_df.columns]
+    missing_cols = [col for col in colbert_required_columns if col not in colbert_ranking_df.columns]
     if missing_cols:
-        raise ValueError(f"biased ranking missing columns: {', '.join(missing_cols)}")
+        raise ValueError(f"ColBERT ranking missing columns: {', '.join(missing_cols)}")
         
-    missing_cols = [col for col in debiased_required_columns if col not in debiased_ranking_df.columns]
+    missing_cols = [col for col in sbr_required_columns if col not in sbr_ranking_df.columns]
     if missing_cols:
-        raise ValueError(f"unbiased ranking missing columns: {', '.join(missing_cols)}")
+        raise ValueError(f"SBR ranking missing columns: {', '.join(missing_cols)}")
     
     # Validate or create dummy qrels
     if qrels_df is not None and not qrels_df.empty:
@@ -266,13 +266,13 @@ def process_all_queries(biased_ranking_df, debiased_ranking_df, qrels_df=None, t
         missing_cols = [col for col in qrels_required_columns if col not in qrels_df.columns]
         if missing_cols:
             print(f"Warning: qrels missing columns: {', '.join(missing_cols)}. Creating dummy qrels.")
-            qrels_df = get_dummy_qrels_data(biased_ranking_df, debiased_ranking_df)
+            qrels_df = get_dummy_qrels_data(colbert_ranking_df, sbr_ranking_df)
     else:
         print("No qrels provided. Creating dummy qrels data.")
-        qrels_df = get_dummy_qrels_data(biased_ranking_df, debiased_ranking_df)
+        qrels_df = get_dummy_qrels_data(colbert_ranking_df, sbr_ranking_df)
     
     # Get common query IDs
-    all_qids = sorted(set(biased_ranking_df['qid'].unique()) & set(debiased_ranking_df['qid'].unique()))
+    all_qids = sorted(set(colbert_ranking_df['qid'].unique()) & set(sbr_ranking_df['qid'].unique()))
     
     if not all_qids:
         raise ValueError("no same qid in two rankings")
@@ -285,8 +285,8 @@ def process_all_queries(biased_ranking_df, debiased_ranking_df, qrels_df=None, t
     for qid in all_qids:
         try:
             selected_docs = strategic_document_selection(
-                biased_ranking_df, 
-                debiased_ranking_df, 
+                colbert_ranking_df, 
+                sbr_ranking_df, 
                 qid, 
                 qrels_df=qrels_df,
                 top_k=top_k,
@@ -317,24 +317,24 @@ def process_all_queries(biased_ranking_df, debiased_ranking_df, qrels_df=None, t
     return result_df
 
 
-def get_dummy_qrels_data(biased_ranking_df, debiased_ranking_df):
+def get_dummy_qrels_data(colbert_ranking_df, sbr_ranking_df):
     """
     Create dummy qrels assuming top-10 documents from either ranking are relevant (label=1).
     Others are non-relevant (label=0).
     """
-    all_qids = sorted(set(biased_ranking_df['qid'].unique()) & set(debiased_ranking_df['qid'].unique()))
+    all_qids = sorted(set(colbert_ranking_df['qid'].unique()) & set(sbr_ranking_df['qid'].unique()))
     rows = []
     
     for qid in all_qids:
-        biased_docs = biased_ranking_df[biased_ranking_df['qid'] == qid].sort_values('biased_rank')
-        debiased_docs = debiased_ranking_df[debiased_ranking_df['qid'] == qid].sort_values('unbiased_rank')
+        colbert_docs = colbert_ranking_df[colbert_ranking_df['qid'] == qid].sort_values('colbert_rank')
+        sbr_docs = sbr_ranking_df[sbr_ranking_df['qid'] == qid].sort_values('sbr_rank')
         
         # Top 10 from either ranking are considered relevant
-        top_biased_docnos = set(biased_docs.head(10)['docno'])
-        top_debiased_docnos = set(debiased_docs.head(10)['docno'])
-        relevant_docnos = top_biased_docnos.union(top_debiased_docnos)
+        top_colbert_docnos = set(colbert_docs.head(10)['docno'])
+        top_sbr_docnos = set(sbr_docs.head(10)['docno'])
+        relevant_docnos = top_colbert_docnos.union(top_sbr_docnos)
         
-        all_docnos = set(biased_docs['docno']).union(set(debiased_docs['docno']))
+        all_docnos = set(colbert_docs['docno']).union(set(sbr_docs['docno']))
         
         for docno in all_docnos:
             rows.append({
@@ -350,19 +350,19 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Strategic document selection merging biased and debiased rankings"
+        description="Strategic document selection merging ColBERT and SBR rankings"
     )
     parser.add_argument(
-        "biased_file",
+        "colbert_file",
         nargs="?",
         default="colbert_rankings_original.csv",
-        help="Path to biased (original ColBERT) ranking CSV. Columns: qid, query, docno, text, biased_rank"
+        help="Path to ColBERT (original) ranking CSV. Columns: qid, query, docno, text, colbert_rank"
     )
     parser.add_argument(
-        "debiased_file",
+        "sbr_file",
         nargs="?",
-        default="debiased_rankings_version1.csv",
-        help="Path to debiased ranking CSV. Columns: qid, query, docno, text, unbiased_rank"
+        default="sbr_rankings_version1.csv",
+        help="Path to SBR (debiased) ranking CSV. Columns: qid, query, docno, text, sbr_rank"
     )
     parser.add_argument(
         "--top_k",
@@ -387,20 +387,20 @@ def main():
     
     print("Loading ranking data...")
     
-    # Load biased ranking
-    biased_df = pd.read_csv(args.biased_file)
-    required_cols = ['qid', 'query', 'docno', 'text', 'biased_rank']
-    if not all(col in biased_df.columns for col in required_cols):
-        raise ValueError(f"Biased ranking CSV must contain columns: {required_cols}")
+    # Load ColBERT ranking
+    colbert_df = pd.read_csv(args.colbert_file)
+    required_cols = ['qid', 'query', 'docno', 'text', 'colbert_rank']
+    if not all(col in colbert_df.columns for col in required_cols):
+        raise ValueError(f"ColBERT ranking CSV must contain columns: {required_cols}")
     
-    # Load debiased ranking
-    debiased_df = pd.read_csv(args.debiased_file)
-    required_cols = ['qid', 'query', 'docno', 'text', 'unbiased_rank']
-    if not all(col in debiased_df.columns for col in required_cols):
-        raise ValueError(f"Debiased ranking CSV must contain columns: {required_cols}")
+    # Load SBR ranking
+    sbr_df = pd.read_csv(args.sbr_file)
+    required_cols = ['qid', 'query', 'docno', 'text', 'sbr_rank']
+    if not all(col in sbr_df.columns for col in required_cols):
+        raise ValueError(f"SBR ranking CSV must contain columns: {required_cols}")
     
-    print(f"Loaded biased ranking: {len(biased_df)} documents for {biased_df['qid'].nunique()} queries")
-    print(f"Loaded debiased ranking: {len(debiased_df)} documents for {debiased_df['qid'].nunique()} queries")
+    print(f"Loaded ColBERT ranking: {len(colbert_df)} documents for {colbert_df['qid'].nunique()} queries")
+    print(f"Loaded SBR ranking: {len(sbr_df)} documents for {sbr_df['qid'].nunique()} queries")
     
     # Load qrels if provided
     qrels_df = None
@@ -411,8 +411,8 @@ def main():
     # Process all queries
     print(f"\nProcessing with top_k={args.top_k}...")
     result_df = process_all_queries(
-        biased_df, 
-        debiased_df, 
+        colbert_df, 
+        sbr_df, 
         qrels_df=qrels_df,
         top_k=args.top_k,
         model_name="princeton-nlp/sup-simcse-bert-base-uncased"
