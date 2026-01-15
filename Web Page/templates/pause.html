@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Paused</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f2f2f2;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background-color: #fff;
+      padding: 40px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      border-radius: 5px;
+    }
+    .pause-message {
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+    .start-btn {
+      font-size: 32px;
+      padding: 20px 40px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .start-btn:hover {
+      background-color: #45a049;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="pause-message">
+      Take a break. When you're ready to continue, click the <strong>Start</strong> button.
+    </div>
+    <button class="start-btn" onclick="resumeSurvey()">Start</button>
+  </div>
+  <script>
+    // Get URL parameter query
+    function getQueryParam(param) {
+      let params = new URLSearchParams(window.location.search);
+      return params.get(param);
+    }
+    let currentQuery = getQueryParam("query") || 1;
+    let pauseStartTime = Date.now();
+    function resumeSurvey(){
+      let pauseDuration = Date.now() - pauseStartTime;
+      let userId = "{{ session['user_id'] }}";
+      // Record pause duration (qid: 0 indicates paused state)
+      fetch('/api/log', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          userId: userId,
+          qid: 0,
+          docId: "PAUSE",
+          eventType: "PAUSE_DURATION: " + pauseDuration,
+          duration: pauseDuration
+        })
+      });
+      // Return to the query page before pause
+      window.location.href = "/query/" + currentQuery;
+    }
+  </script>
+</body>
+</html>
