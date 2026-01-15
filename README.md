@@ -10,13 +10,16 @@ pip install numpy pandas torch transformers scipy
 
 ## Workflow
 
-The complete workflow consists of two steps:
+The complete workflow consists of three steps:
 
 ### Step 1: Generate SBR Rankings
 Apply semantic-based reranking to ColBERT results.
 
 ### Step 2: Strategic Document Selection
 Merge ColBERT and SBR rankings to select documents for evaluation.
+
+### Step 3: Human Evaluation Interface
+Deploy web interface for collecting human judgments on selected documents.
 
 ---
 
@@ -100,6 +103,55 @@ This creates a balanced set for human evaluation comparing ColBERT vs SBR rankin
 
 ---
 
+## Step 3: Human Evaluation Interface
+
+A web-based evaluation interface for collecting human judgments on the selected documents.
+
+### Setup
+
+```bash
+# Navigate to evaluation interface directory
+cd evaluation_interface
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Place your CSV file
+# Copy strategic_selection_results_version1.csv to the same directory as app.py
+```
+
+### Usage
+
+```bash
+# Start the web server
+python app.py
+```
+
+The evaluation interface will:
+- Load document sets from the CSV file
+- Present documents in a 3×3 grid layout
+- Collect user preferences between ColBERT and SBR rankings
+- Store evaluation results in the database
+
+### Files Structure
+
+```
+evaluation_interface/
+├── app.py                              # Main application
+├── requirements.txt                    # Python dependencies
+├── profile.txt                         # Configuration
+├── strategic_selection_results_version1.csv  # Document sets (from Step 2)
+└── templates/
+    ├── index.html                      # Main evaluation page
+    ├── query.html                      # Query display
+    ├── pause.html                      # Break page
+    └── thanks.html                     # Completion page
+```
+
+**Note:** The CSV file from Step 2 should be placed in the same directory as `app.py`. The application will automatically load and display the document sets.
+
+---
+
 ## Quick Start Example
 
 ```bash
@@ -108,6 +160,12 @@ python ipssim_version_1.py colbert_results.csv 5 1.0 --output sbr_results.csv
 
 # Step 2: Select documents for evaluation
 python strategy_merge_version1.py colbert_results.csv sbr_results.csv --top_k 4 --output evaluation_set.csv
+
+# Step 3: Run evaluation interface
+cd evaluation_interface
+cp ../evaluation_set.csv strategic_selection_results_version1.csv
+python app.py
+# Then open browser and navigate to the displayed URL (typically http://localhost:5000)
 ```
 
 ## Key Formula
@@ -127,7 +185,8 @@ Where:
 
 - **Step 1** requires only ColBERT rankings (no click data needed)
 - **Step 2** creates dummy qrels if none provided (assumes top-10 are relevant)
-- Both scripts use SimCSE-BERT for semantic similarity computation
+- **Step 3** evaluation interface reads CSV directly - no database import script needed
+- All scripts use SimCSE-BERT for semantic similarity computation
 - GPU acceleration available if CUDA is installed
 
 ## Citation
