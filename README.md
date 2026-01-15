@@ -1,6 +1,6 @@
-# Strategic Document Selection for Ranking Evaluation
+# SBR (Semantic-Based Reranking) for ColBERT Rankings
 
-This script merges biased (original) and debiased rankings to create a strategic document set for evaluation.
+This repository implements the SBR (Semantic-Based Reranking) method to improve ColBERT ranking quality through semantic similarity adjustment, followed by strategic document selection for evaluation.
 
 ## Requirements
 
@@ -8,127 +8,127 @@ This script merges biased (original) and debiased rankings to create a strategic
 pip install numpy pandas torch transformers scipy
 ```
 
-## Usage
+## Workflow
 
-### Basic usage (with defaults):
+The complete workflow consists of two steps:
+
+### Step 1: Generate SBR Rankings
+Apply semantic-based reranking to ColBERT results.
+
+### Step 2: Strategic Document Selection
+Merge ColBERT and SBR rankings to select documents for evaluation.
+
+---
+
+## Step 1: SBR Reranking (`ipssim_version_1.py`)
+
+Applies semantic similarity adjustment to ColBERT rankings without requiring click data.
+
+### Usage
+
 ```bash
+# Basic usage with defaults
+python ipssim_version_1.py
+
+# Custom parameters
+python ipssim_version_1.py <input_file> <top_k> <alpha_coef> --output <output_file>
+```
+
+**Parameters:**
+- `input_file`: ColBERT ranking CSV (default: `colbert_rankings_default.csv`)
+- `top_k`: Number of top documents for similarity calculation (default: 5)
+- `alpha_coef`: Semantic similarity weight (default: 1.0)
+- `--output`: Output file path (default: `debiased_rankings_version1.csv`)
+
+### Input Format
+
+CSV with columns: `qid, docno, score, text`
+
+### Output Format
+
+CSV with columns: `qid, docno, score, normalized_score, semantic_sim, sbr_score, sbr_rank, text`
+
+### Method
+
+1. Remove duplicate documents within each query
+2. Identify top-k documents by ColBERT score
+3. Compute semantic similarity using SimCSE embeddings
+4. Apply SBR formula: `sbr_score = normalized_score × (1 + alpha × semantic_sim)`
+5. Re-rank documents by SBR score
+
+---
+
+## Step 2: Strategic Selection (`strategy_merge_version1.py`)
+
+Merges ColBERT and SBR rankings to select documents for evaluation.
+
+### Usage
+
+```bash
+# Basic usage with defaults
 python strategy_merge_version1.py
-```
-This will use default files: `colbert_rankings_original.csv` (biased) and `debiased_rankings_version1.csv` (debiased).
 
-### Custom files:
-```bash
-python strategy_merge_version1.py <biased_file> <debiased_file>
+# Custom files
+python strategy_merge_version1.py <colbert_file> <sbr_file> --top_k <k> --output <output_file>
 ```
 
-**Arguments:**
-- `biased_file`: Path to biased (original ColBERT) ranking CSV (default: `colbert_rankings_original.csv`)
-- `debiased_file`: Path to debiased ranking CSV (default: `debiased_rankings_version1.csv`)
-
-**Optional flags:**
-- `--top_k`: Number of documents to select from each ranking (default: 4)
-- `--qrels`: Path to qrels CSV file with relevance judgments (optional)
+**Parameters:**
+- `colbert_file`: ColBERT ranking CSV (default: `colbert_rankings_original.csv`)
+- `sbr_file`: SBR ranking CSV from Step 1 (default: `sbr_rankings_version1.csv`)
+- `--top_k`: Documents to select from each ranking (default: 4)
+- `--qrels`: Optional qrels file for relevance judgments
 - `--output`: Output file path (default: `strategic_selection_results_version1.csv`)
 
-### Examples:
+### Input Format
+
+**ColBERT ranking:** `qid, query, docno, text, colbert_rank`  
+**SBR ranking:** `qid, query, docno, text, sbr_rank`
+
+### Output Format
+
+CSV with: `qid, query, docno, text, colbert_rank, sbr_rank, semantic_sim, source, from, selected_in_turn, label`
+
+### Selection Strategy
+
+For each query, selects **9 documents** (suitable for 3×3 grid presentation):
+
+1. **Top-4 from ColBERT**: Documents ranked highest by ColBERT
+2. **Top-4 from SBR**: Documents ranked highest by SBR (excluding duplicates)
+3. **1 Easy Negative**: Document with lowest semantic similarity and label=0
+
+This creates a balanced set for human evaluation comparing ColBERT vs SBR rankings.
+
+---
+
+## Quick Start Example
 
 ```bash
-# Use your own ranking files with default parameters
-python strategy_merge_version1.py my_biased.csv my_debiased.csv
+# Step 1: Generate SBR rankings
+python ipssim_version_1.py colbert_results.csv 5 1.0 --output sbr_results.csv
 
-# Customize top-k to 5
-python strategy_merge_version1.py my_biased.csv my_debiased.csv --top_k 5
-
-# Provide qrels and custom output
-python strategy_merge_version1.py my_biased.csv my_debiased.csv --qrels my_qrels.csv --output merged.csv
+# Step 2: Select documents for evaluation
+python strategy_merge_version1.py colbert_results.csv sbr_results.csv --top_k 4 --output evaluation_set.csv
 ```
 
-## Input Format
+## Key Formula
 
-### Biased Ranking CSV
-Must contain columns:
-- `qid`: Query ID
-- `query`: Query text
-- `docno`: Document ID
-- `text`: Document text
-- `biased_rank`: Rank position in biased ranking
+The SBR score formula (from paper):
 
-### Debiased Ranking CSV
-Must contain columns:
-- `qid`: Query ID
-- `query`: Query text
-- `docno`: Document ID
-- `text`: Document text
-- `unbiased_rank`: Rank position in debiased ranking
+```
+Score_SBR(d) = Score_ColBERT(d) × (1 + α × AvgSim(d, D_top))
+```
 
-### Qrels CSV (Optional)
-If provided, must contain columns:
-- `qid`: Query ID
-- `docno`: Document ID
-- `label`: Relevance label (0=non-relevant, 1+=relevant)
+Where:
+- `Score_ColBERT(d)`: Normalized ColBERT score
+- `AvgSim(d, D_top)`: Average semantic similarity with top-k documents
+- `α` (alpha_coef): Weight parameter controlling diversity
 
-If not provided, the script creates dummy qrels assuming top-10 documents are relevant.
+## Notes
 
-## Output Format
-
-The output CSV contains selected documents with:
-- `qid`: Query ID
-- `query`: Query text
-- `docno`: Document ID
-- `text`: Document text
-- `biased_rank`: Rank in biased ranking
-- `debiased_rank`: Rank in debiased ranking
-- `semantic_sim`: Semantic similarity score (for easy negatives)
-- `source`: Selection source ("top from biased", "top from debiased", "easy negative")
-- `from`: Ranking source ("biased" or "debiased")
-- `selected_in_turn`: Selection order (1-9)
-- `label`: Relevance label (if qrels provided)
-
-## Selection Strategy
-
-For each query, the script selects **2×top_k + 1** documents (default: 9 documents):
-
-### Step 1: Top-k from Biased Ranking (default: 4 documents)
-- Selects top-k documents ranked highest in the biased (original) ranking
-- These represent what the original ranker considers most relevant
-
-### Step 2: Top-k from Debiased Ranking (default: 4 documents)
-- Selects top-k documents ranked highest in the debiased ranking
-- **Excludes documents already selected in Step 1** (no duplicates)
-- These represent documents that were "under-valued" by the biased ranker
-
-### Step 3: Easy Negative (1 document)
-- Selects one document with:
-  1. **Lowest semantic similarity** to the 8 documents selected in Steps 1-2
-  2. **Relevance label = 0** (non-relevant, if qrels provided)
-- This serves as a control/negative example for evaluation
-
-### Semantic Similarity Calculation
-- Uses SimCSE-BERT embeddings (`princeton-nlp/sup-simcse-bert-base-uncased`)
-- For each document, computes average cosine similarity with selected documents
-- Documents with lower similarity are more dissimilar/diverse
-
-## Method Overview
-
-1. **Load Rankings**: Load biased and debiased ranking files
-2. **Validate Format**: Check required columns exist
-3. **Load/Create Qrels**: Load qrels if provided, otherwise create dummy qrels
-4. **For Each Query**:
-   - Select top-k from biased ranking
-   - Select top-k from debiased ranking (excluding duplicates)
-   - Compute semantic similarity for remaining documents
-   - Select easy negative (lowest similarity + label=0)
-5. **Save Results**: Output merged selection to CSV
-
-## Use Case
-
-This strategic selection is designed for:
-- **Audit-based evaluation** of ranking systems
-- **Human evaluation** studies comparing biased vs debiased rankings
-- **Identifying under-valued documents** that debiasing surfaced
-- **Controlled experiments** with positive and negative examples
-
-The 3×3 grid layout (9 documents total) is suitable for presenting to human evaluators for preference judgments.
+- **Step 1** requires only ColBERT rankings (no click data needed)
+- **Step 2** creates dummy qrels if none provided (assumes top-10 are relevant)
+- Both scripts use SimCSE-BERT for semantic similarity computation
+- GPU acceleration available if CUDA is installed
 
 ## Citation
 
